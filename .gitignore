@@ -3,7 +3,14 @@
 /thesis_text
 /vorlage_nova
 /.venv
-
+/pictures
 
 # Files
 .DS_Store
+goodresearch.md 
+
+# python files
+testimport.py
+
+# pyc files
+*.pyc
