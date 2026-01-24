@@ -87,9 +87,13 @@ def eval_genomes(genomes, config, env_1='CartPole-v1', env_2='MountainCar-v0', p
         env_2 (str): Name of the second environment.
     
     """
+    # Store environment names before creating gym objects
+    env_1_name = env_1
+    env_2_name = env_2
+
     # Wir erstellen die Environments einmal außerhalb der Genome-Schleife
-    env_1 = gym.make(env_1)
-    env_2 = gym.make(env_2)
+    env_1 = gym.make(env_1_name)
+    env_2 = gym.make(env_2_name)
 
     # Store objectives for each genome (needed for Pareto evaluation)
     genome_objectives = []
@@ -146,8 +150,8 @@ def eval_genomes(genomes, config, env_1='CartPole-v1', env_2='MountainCar-v0', p
         fitness_2 = pos_score + vel_score + goal_bonus
 
         # --- NORMALISIERUNG ---
-        norm_1 = normalize_reward(fitness_1, env_1)
-        norm_2 = normalize_reward(fitness_2, env_2)
+        norm_1 = normalize_reward(fitness_1, env_1_name)
+        norm_2 = normalize_reward(fitness_2, env_2_name)
 
         # Store normalized objectives for this genome
         genome_objectives.append((norm_1, norm_2))
