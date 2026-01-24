@@ -1,19 +1,17 @@
 import gymnasium as gym
+import numpy as np
 import neat
-env_cartpole = gym.make("CartPole-v1")
-env_mountaincar = gym.make("MountainCar-v0")
 
-
-def normalize_reward(shaped_fitness, env_type="cartpole"):
+def normalize_reward(shaped_fitness, env_type="CartPole-v1"):
     """
     Normalisiert die Fitness auf den Bereich [0, 1].
     Speziell angepasst an das MountainCar Fitness-Shaping.
     """
-    if env_type == "cartpole":
+    if env_type == "CartPole-v1":
         # CartPole-v1: Standard-Belohnung ist die Anzahl der Schritte (max 500)
         r_min, r_max = 0.0, 500.0
     
-    elif env_type == "mountaincar":
+    elif env_type == "MountainCar-v0":
         # Basierend auf deinem Code:
         # Position (100) + Velocity (~35) + Goal Bonus (max 400)
         # Wir setzen das Maximum auf 535, um den Bereich voll auszuschöpfen.
@@ -29,7 +27,56 @@ def normalize_reward(shaped_fitness, env_type="cartpole"):
     # außerhalb von [0, 1] entstehen
     return max(0.0, min(1.0, normalized))
 
-def eval_genomes(genomes, config, env_1='CartPole-v1', env_2='MountainCar-v0'):
+
+def _pareto_dominates(obj_a, obj_b):
+    """
+    Returns True if obj_a Pareto-dominates obj_b.
+    obj_a dominates obj_b if obj_a is >= in all objectives and > in at least one.
+    """
+    at_least_as_good = all(a >= b for a, b in zip(obj_a, obj_b))
+    strictly_better = any(a > b for a, b in zip(obj_a, obj_b))
+    return at_least_as_good and strictly_better
+
+
+def _compute_pareto_ranks(objectives):
+    """
+    Compute Pareto ranks using non-dominated sorting.
+    Returns a list of ranks (0 = non-dominated front, higher = dominated).
+    
+    Args:
+        objectives: List of tuples, each containing objective values for a genome.
+        
+    Returns:
+        List of integer ranks corresponding to each genome.
+    """
+    n = len(objectives)
+    ranks = [-1] * n
+    remaining = set(range(n))
+    current_rank = 0
+    
+    while remaining:
+        # Find non-dominated individuals in the remaining set
+        non_dominated = []
+        for i in remaining:
+            is_dominated = False
+            for j in remaining:
+                if i != j and _pareto_dominates(objectives[j], objectives[i]):
+                    is_dominated = True
+                    break
+            if not is_dominated:
+                non_dominated.append(i)
+        
+        # Assign current rank to non-dominated individuals
+        for i in non_dominated:
+            ranks[i] = current_rank
+            remaining.remove(i)
+        
+        current_rank += 1
+    
+    return ranks
+
+
+def eval_genomes(genomes, config, env_1='CartPole-v1', env_2='MountainCar-v0', pareto=False):
     """
     Evaluates the genomes on multiple environments.
 
@@ -43,6 +90,9 @@ def eval_genomes(genomes, config, env_1='CartPole-v1', env_2='MountainCar-v0'):
     # Wir erstellen die Environments einmal außerhalb der Genome-Schleife
     env_1 = gym.make(env_1)
     env_2 = gym.make(env_2)
+
+    # Store objectives for each genome (needed for Pareto evaluation)
+    genome_objectives = []
 
     for genome_id, genome in genomes:
         net = neat.nn.FeedForwardNetwork.create(genome, config)
@@ -95,13 +145,32 @@ def eval_genomes(genomes, config, env_1='CartPole-v1', env_2='MountainCar-v0'):
         goal_bonus = (200 + (200 - steps_2)) if reached_goal else 0
         fitness_2 = pos_score + vel_score + goal_bonus
 
-        # --- NORMALISIERUNG & KOMBINATION ---
-        norm_1 = normalize_reward(fitness_1, "cartpole")
-        norm_2 = normalize_reward(fitness_2, "mountaincar")
+        # --- NORMALISIERUNG ---
+        norm_1 = normalize_reward(fitness_1, env_1)
+        norm_2 = normalize_reward(fitness_2, env_2)
 
-        # Wir nutzen das arithmetische Mittel: 0.5 * CP + 0.5 * MC
-        # So kann die Evolution erst eine Aufgabe lernen, ohne sofort auszusterben.
-        genome.fitness = (norm_1 + norm_2) / 2.0
+        # Store normalized objectives for this genome
+        genome_objectives.append((norm_1, norm_2))
 
     env_1.close()
     env_2.close()
+
+    # --- FITNESS ASSIGNMENT ---
+    if pareto:
+        # Pareto efficiency: assign fitness based on Pareto rank
+        # Lower rank = better (non-dominated front has rank 0)
+        ranks = _compute_pareto_ranks(genome_objectives)
+        max_rank = max(ranks) if ranks else 0
+        
+        for i, (genome_id, genome) in enumerate(genomes):
+            # Convert rank to fitness: higher fitness for lower rank
+            # Fitness ranges from 0 (worst rank) to 1 (rank 0)
+            if max_rank > 0:
+                genome.fitness = 1.0 - (ranks[i] / max_rank)
+            else:
+                genome.fitness = 1.0  # All genomes are non-dominated
+    else:
+        # Standard: arithmetic mean of objectives
+        for i, (genome_id, genome) in enumerate(genomes):
+            norm_1, norm_2 = genome_objectives[i]
+            genome.fitness = (norm_1 + norm_2) / 2.0
