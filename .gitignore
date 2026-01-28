@@ -10,7 +10,11 @@
 goodresearch.md 
 
 # python files
-testimport.py
+testrunmetaworld.py
+
 
 # pyc files
 *.pyc
+
+# Claude Files
+CLAUDE.md
