@@ -18,10 +18,22 @@ dependencies = [
     "typing-extensions==4.15.0",
 ]
 
+[project.optional-dependencies]
+metaworld = [
+    "metaworld>=3.0.0",
+]
+tensorneat = [
+    "jax>=0.4.28",
+    "tensorneat @ git+https://github.com/EMI-Group/tensorneat.git",
+]
+
 [build-system]
 requires = ["hatchling"]
 build-backend = "hatchling.build"
 
+[tool.hatch.metadata]
+allow-direct-references = true
+
 
 [tool.hatch.build.targets.wheel]
-packages = ["src/config", "src/evaluation"]
+packages = ["src/config", "src/evaluation", "src/training"]

@@ -22,3 +22,6 @@ chronogram.xlsx
 
 # Claude Files
 CLAUDE.md
+
+# TensorNEAT run artifacts
+/output/tensorneat/
