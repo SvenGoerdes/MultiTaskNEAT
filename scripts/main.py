@@ -2,7 +2,7 @@ import neat
 import gymnasium as gym
 import numpy as np
 import importlib.resources
-from evaluation.environments import CartPoleEnvironment, MountainCarEnvironment
+from evaluation.environments import HopperEnvironment, Walker2DEnvironment
 from evaluation.evaluator import MultiEnvironmentEvaluator
 
 # Load configuration
@@ -17,8 +17,8 @@ with importlib.resources.path("config", "config") as config_path:
 
 # Create environment instances
 environments = [
-    CartPoleEnvironment(),
-    MountainCarEnvironment()
+    HopperEnvironment(),
+    Walker2DEnvironment()
 ]
 
 # Initialize multi-environment evaluator
@@ -51,59 +51,62 @@ print(winner)
 # Create network from winner
 net = neat.nn.FeedForwardNetwork.create(winner, config)
 
-# Test on CartPole
-print('\n--- Testing Winner (CartPole-v1) ---')
-env_cartpole = gym.make("CartPole-v1", render_mode="human")
-cartpole_env = environments[0]  # CartPoleEnvironment instance
+# Test on Hopper
+print('\n--- Testing Winner (Hopper-v4) ---')
+env_hopper = gym.make("Hopper-v4", render_mode="human")
+hopper_env = environments[0]  # HopperEnvironment instance
 
-observation, _ = env_cartpole.reset()
+observation, _ = env_hopper.reset()
+total_reward = 0.0
 steps = 0
 
 while True:
-    # Use proper input padding for CartPole
-    inputs = list(observation) + [0.0] * (evaluator.get_total_input_dims() - len(observation))
+    inputs = [0.0] * evaluator.get_total_input_dims()
+    for i, val in enumerate(observation):
+        inputs[hopper_env.input_offset + i] = float(val)
     outputs = net.activate(inputs)
 
-    # Use CartPole's output slice
-    action_outputs = outputs[cartpole_env.output_offset:
-                             cartpole_env.output_offset + cartpole_env.action_space_size]
-    action = int(np.argmax(action_outputs))
+    action_outputs = outputs[hopper_env.output_offset:
+                             hopper_env.output_offset + hopper_env.action_space_size]
+    action = np.tanh(action_outputs)
+    action = np.clip(action, env_hopper.action_space.low, env_hopper.action_space.high)
 
-    observation, reward, terminated, truncated, _ = env_cartpole.step(action)
+    observation, reward, terminated, truncated, _ = env_hopper.step(action)
+    total_reward += reward
     steps += 1
 
     if terminated or truncated:
-        print(f'Episode ended after {steps} steps')
+        print(f'Episode ended after {steps} steps, total reward: {total_reward:.2f}')
         break
 
-env_cartpole.close()
+env_hopper.close()
 
-# Test on MountainCar
-print('\n--- Testing Winner (MountainCar-v0) ---')
-env_mountaincar = gym.make("MountainCar-v0", render_mode="human")
-mountaincar_env = environments[1]  # MountainCarEnvironment instance
+# Test on Walker2D
+print('\n--- Testing Winner (Walker2d-v4) ---')
+env_walker = gym.make("Walker2d-v4", render_mode="human")
+walker_env = environments[1]  # Walker2DEnvironment instance
 
-observation, _ = env_mountaincar.reset()
+observation, _ = env_walker.reset()
+total_reward = 0.0
 steps = 0
 
 while True:
-    # Use proper input padding for MountainCar
-    inputs = [0.0] * mountaincar_env.input_offset + list(observation)
+    inputs = [0.0] * evaluator.get_total_input_dims()
+    for i, val in enumerate(observation):
+        inputs[walker_env.input_offset + i] = float(val)
     outputs = net.activate(inputs)
 
-    # Use MountainCar's output slice
-    action_outputs = outputs[mountaincar_env.output_offset:
-                             mountaincar_env.output_offset + mountaincar_env.action_space_size]
-    action = int(np.argmax(action_outputs))
+    action_outputs = outputs[walker_env.output_offset:
+                             walker_env.output_offset + walker_env.action_space_size]
+    action = np.tanh(action_outputs)
+    action = np.clip(action, env_walker.action_space.low, env_walker.action_space.high)
 
-    observation, reward, terminated, truncated, _ = env_mountaincar.step(action)
+    observation, reward, terminated, truncated, _ = env_walker.step(action)
+    total_reward += reward
     steps += 1
 
-    if terminated:
-        print(f'🎉 Goal reached in {steps} steps!')
-        break
-    if truncated:
-        print(f'Episode ended after {steps} steps (did not reach goal)')
+    if terminated or truncated:
+        print(f'Episode ended after {steps} steps, total reward: {total_reward:.2f}')
         break
 
-env_mountaincar.close()
+env_walker.close()

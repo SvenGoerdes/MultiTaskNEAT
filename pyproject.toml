@@ -8,6 +8,7 @@ authors = [
 ]
 requires-python = ">=3.10"
 dependencies = [
+    "brax>=0.12.0",
     "cloudpickle==3.1.2",
     "farama-notifications==0.0.4",
     "gymnasium==1.2.3",
@@ -25,6 +26,9 @@ metaworld = [
 tensorneat = [
     "jax>=0.4.28",
     "tensorneat @ git+https://github.com/EMI-Group/tensorneat.git",
+]
+metal = [
+    "jax-metal>=0.1.0",
 ]
 
 [build-system]

@@ -2,35 +2,37 @@ import argparse
 
 from training.tensorneat_runner import (
     TensorNEATRunConfig,
-    gpu_profile,
-    m1_profile,
-    run_tensorneat_metaworld,
+    brax_cpu_profile,
+    brax_gpu_profile,
+    run_tensorneat_brax,
 )
 
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
-        description="Run TensorNEAT on MetaWorld MT1 tasks."
+        description="Run TensorNEAT on Brax environments (Hopper, Walker2D)."
     )
     parser.add_argument(
         "--profile",
-        choices=("m1", "gpu", "custom"),
-        default="m1",
+        choices=("cpu", "gpu", "custom"),
+        default="cpu",
         help="Hardware profile defaults. Use custom to fully control flags.",
     )
-    parser.add_argument("--tasks", nargs="+", default=None)
+    parser.add_argument("--envs", nargs="+", default=None,
+                        help="Brax environment names (e.g. hopper walker2d)")
     parser.add_argument("--population-size", type=int, default=None)
     parser.add_argument("--species-size", type=int, default=None)
     parser.add_argument("--generations", type=int, default=None)
-    parser.add_argument("--episodes-per-task", type=int, default=None)
+    parser.add_argument("--episodes-per-env", type=int, default=None)
     parser.add_argument("--max-steps", type=int, default=None)
     parser.add_argument("--seed", type=int, default=None)
-    parser.add_argument("--success-bonus", type=float, default=None)
     parser.add_argument(
         "--action-decoder",
         choices=("clip", "tanh"),
         default=None,
     )
+    parser.add_argument("--brax-backend", type=str, default=None,
+                        help="Brax physics backend (e.g. mjx, positional, spring)")
     parser.add_argument("--output-dir", type=str, default=None)
     parser.add_argument("--quiet", action="store_true")
     parser.add_argument("--render", action="store_true")
@@ -38,31 +40,31 @@ def parse_args() -> argparse.Namespace:
 
 
 def build_config(args: argparse.Namespace) -> TensorNEATRunConfig:
-    if args.profile == "m1":
-        config = m1_profile()
+    if args.profile == "cpu":
+        config = brax_cpu_profile()
     elif args.profile == "gpu":
-        config = gpu_profile()
+        config = brax_gpu_profile()
     else:
         config = TensorNEATRunConfig()
 
-    if args.tasks is not None:
-        config.task_names = tuple(args.tasks)
+    if args.envs is not None:
+        config.env_names = tuple(args.envs)
     if args.population_size is not None:
         config.population_size = args.population_size
     if args.species_size is not None:
         config.species_size = args.species_size
     if args.generations is not None:
         config.generations = args.generations
-    if args.episodes_per_task is not None:
-        config.episodes_per_task = args.episodes_per_task
+    if args.episodes_per_env is not None:
+        config.episodes_per_env = args.episodes_per_env
     if args.max_steps is not None:
         config.max_steps_per_episode = args.max_steps
     if args.seed is not None:
         config.seed = args.seed
-    if args.success_bonus is not None:
-        config.success_bonus = args.success_bonus
     if args.action_decoder is not None:
         config.action_decoder = args.action_decoder
+    if args.brax_backend is not None:
+        config.brax_backend = args.brax_backend
     if args.output_dir is not None:
         config.output_dir = args.output_dir
 
@@ -76,7 +78,7 @@ def main() -> None:
     config = build_config(args)
 
     try:
-        result = run_tensorneat_metaworld(config)
+        result = run_tensorneat_brax(config)
     except RuntimeError as exc:
         raise SystemExit(str(exc)) from exc
 
@@ -84,7 +86,7 @@ def main() -> None:
         "TensorNEAT run finished. "
         f"best_fitness={result.best_fitness:.3f}, "
         f"best_generation={result.best_generation}, "
-        f"tasks={result.resolved_tasks}"
+        f"envs={result.env_names}"
     )
     print(f"History: {result.history_path}")
     print(f"Best genome: {result.best_genome_path}")

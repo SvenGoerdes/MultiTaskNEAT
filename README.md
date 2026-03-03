@@ -8,49 +8,67 @@ This project uses `uv`.
 uv sync
 ```
 
-## TensorNEAT + MetaWorld
+## Main Training Script (neat-python)
+
+Trains a single shared NEAT network on Brax Hopper and Walker2D using input/output padding:
+
+```bash
+uv run python scripts/main.py
+```
+
+## TensorNEAT + Brax
 
 TensorNEAT integration is implemented via:
 
-- `scripts/tensorneat_metaworld.py`
+- `scripts/tensorneat_brax.py`
 - `src/training/tensorneat_runner.py`
 
 Install optional dependencies:
 
 ```bash
-uv sync --extra metaworld --extra tensorneat
+uv sync --extra tensorneat
 ```
 
-### macOS M1 Pro (local)
+### macOS with Metal GPU (Apple Silicon)
 
-Use the conservative profile first:
+Install the JAX Metal plugin for GPU acceleration on Mac:
 
 ```bash
-uv run python scripts/tensorneat_metaworld.py --profile m1
+uv sync --extra tensorneat --extra metal
 ```
 
-This uses smaller population/generation defaults to keep runtime manageable on CPU.
+Run with the CPU profile (conservative defaults suitable for local development):
+
+```bash
+uv run python scripts/tensorneat_brax.py --profile cpu
+```
+
+JAX will automatically detect and use the Metal GPU backend when `jax-metal` is installed. You can verify with:
+
+```bash
+uv run python -c "import jax; print(jax.devices())"
+```
 
 Detailed setup notes: `docs/tensorneat-setup.md`
 
-### University GPU server (later)
+### CUDA GPU server
 
 Use larger defaults:
 
 ```bash
-uv run python scripts/tensorneat_metaworld.py --profile gpu
+uv run python scripts/tensorneat_brax.py --profile gpu
 ```
 
-If your server has CUDA-enabled JAX configured, TensorNEAT can offload model-side JAX ops there. MetaWorld/MuJoCo stepping itself remains environment-simulation bound.
+With CUDA-enabled JAX, both TensorNEAT and Brax leverage full GPU acceleration.
 
 ## Example custom run
 
 ```bash
-uv run python scripts/tensorneat_metaworld.py \
+uv run python scripts/tensorneat_brax.py \
   --profile custom \
-  --tasks reach-v3 drawer-open-v3 button-press-v3 \
+  --envs hopper walker2d \
   --population-size 64 \
   --generations 20 \
-  --episodes-per-task 2 \
-  --max-steps 500
+  --episodes-per-env 2 \
+  --max-steps 1000
 ```

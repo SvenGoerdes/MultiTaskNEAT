@@ -8,30 +8,19 @@ import json
 import random
 
 import numpy as np
-    # "population_size": 4,
-    # "species_size": 2,
-    # "generations": 1,
-    # "episodes_per_task": 1,
-    # "max_steps_per_episode": 10,
-    # "seed": 42,
-    # "survival_threshold": 0.2,
-    # "compatibility_threshold": 2.0,
-    # "max_nodes": 64,
-    # "max_conns": 256,
-    # "activation_options": [
+
 
 @dataclass
 class TensorNEATRunConfig:
-    task_names: tuple[str, ...] = (
-        "reach-v3",
-        "window-open-v3",
-        "button-press-v3",
+    env_names: tuple[str, ...] = (
+        "hopper",
+        "walker2d",
     )
     population_size: int = 4
     species_size: int = 2
     generations: int = 1
-    episodes_per_task: int = 1
-    max_steps_per_episode: int = 10
+    episodes_per_env: int = 1
+    max_steps_per_episode: int = 1000
     seed: int = 42
     survival_threshold: float = 0.2
     compatibility_threshold: float = 2.0
@@ -46,7 +35,7 @@ class TensorNEATRunConfig:
     )
     activation_replace_rate: float = 0.15
     action_decoder: str = "clip"
-    success_bonus: float = 100.0
+    brax_backend: str = "mjx"
     output_dir: str = "output/tensorneat"
     verbose: bool = True
     render: bool = False
@@ -56,7 +45,7 @@ class TensorNEATRunConfig:
 class TensorNEATRunResult:
     best_fitness: float
     best_generation: int
-    resolved_tasks: list[str]
+    env_names: list[str]
     observation_dim: int
     action_dim: int
     history: list[dict[str, float]]
@@ -64,18 +53,20 @@ class TensorNEATRunResult:
     best_genome_path: str
 
 
-def run_tensorneat_metaworld(config: TensorNEATRunConfig) -> TensorNEATRunResult:
+def run_tensorneat_brax(config: TensorNEATRunConfig) -> TensorNEATRunResult:
     modules = _import_runtime_dependencies()
-    gym = modules["gym"]
     jax = modules["jax"]
     jnp = modules["jnp"]
     tensorneat = modules["tensorneat"]
+    brax_envs = modules["brax_envs"]
+    gym_wrapper = modules["gym_wrapper"]
 
     random.seed(config.seed)
     np.random.seed(config.seed)
 
-    resolved_tasks = _resolve_tasks(gym, config.task_names)
-    obs_dim, act_dim, action_low, action_high = _inspect_spaces(gym, resolved_tasks[0])
+    obs_dim, act_dim, action_low, action_high = _inspect_spaces(
+        brax_envs, gym_wrapper, config.env_names[0], config.brax_backend
+    )
 
     activation_functions = _build_activation_functions(
         jnp=jnp,
@@ -124,19 +115,20 @@ def run_tensorneat_metaworld(config: TensorNEATRunConfig) -> TensorNEATRunResult
             transformed = jax.tree_util.tree_map(lambda arr: arr[idx], transformed_population)
             individual_seed = config.seed + generation * 100_000 + idx
             fitness = _evaluate_individual(
-                gym=gym,
+                brax_envs=brax_envs,
+                gym_wrapper=gym_wrapper,
                 jnp=jnp,
                 forward_fn=algorithm.forward,
                 state=state,
                 transformed=transformed,
-                task_names=resolved_tasks,
-                episodes_per_task=config.episodes_per_task,
+                env_names=list(config.env_names),
+                episodes_per_env=config.episodes_per_env,
                 max_steps=config.max_steps_per_episode,
                 base_seed=individual_seed,
                 action_low=action_low,
                 action_high=action_high,
                 action_decoder=config.action_decoder,
-                success_bonus=config.success_bonus,
+                brax_backend=config.brax_backend,
                 render=config.render,
             )
             fitnesses.append(fitness)
@@ -183,7 +175,7 @@ def run_tensorneat_metaworld(config: TensorNEATRunConfig) -> TensorNEATRunResult
         history=history,
         best_genome=best_genome,
         best_fitness=best_fitness,
-        resolved_tasks=resolved_tasks,
+        env_names=list(config.env_names),
         observation_dim=obs_dim,
         action_dim=act_dim,
     )
@@ -191,7 +183,7 @@ def run_tensorneat_metaworld(config: TensorNEATRunConfig) -> TensorNEATRunResult
     return TensorNEATRunResult(
         best_fitness=best_fitness,
         best_generation=best_generation,
-        resolved_tasks=resolved_tasks,
+        env_names=list(config.env_names),
         observation_dim=obs_dim,
         action_dim=act_dim,
         history=history,
@@ -200,40 +192,36 @@ def run_tensorneat_metaworld(config: TensorNEATRunConfig) -> TensorNEATRunResult
     )
 
 
-def m1_profile() -> TensorNEATRunConfig:
+def brax_cpu_profile() -> TensorNEATRunConfig:
     return TensorNEATRunConfig(
         population_size=24,
         species_size=6,
         generations=8,
-        episodes_per_task=1,
-        max_steps_per_episode=200,
-        task_names=("reach-v3", "window-open-v3", "button-press-v3"),
+        episodes_per_env=1,
+        max_steps_per_episode=500,
+        env_names=("hopper", "walker2d"),
+        brax_backend="mjx",
     )
 
 
-def gpu_profile() -> TensorNEATRunConfig:
+def brax_gpu_profile() -> TensorNEATRunConfig:
     return TensorNEATRunConfig(
         population_size=96,
         species_size=16,
         generations=40,
-        episodes_per_task=2,
-        max_steps_per_episode=500,
-        task_names=(
-            "reach-v3",
-            "window-open-v3",
-            "button-press-v3",
-            "drawer-open-v3",
-            "door-open-v3",
-        ),
+        episodes_per_env=2,
+        max_steps_per_episode=1000,
+        env_names=("hopper", "walker2d"),
+        brax_backend="mjx",
     )
 
 
 def _import_runtime_dependencies() -> dict[str, Any]:
     try:
-        import gymnasium as gym
-        import metaworld  # noqa: F401
         import jax
         import jax.numpy as jnp
+        from brax import envs as brax_envs
+        from brax.envs.wrappers import gym as gym_wrapper
         from tensorneat.algorithm.neat import NEAT
         from tensorneat.common import ACT, AGG, State
         from tensorneat.genome import DefaultGenome
@@ -241,13 +229,14 @@ def _import_runtime_dependencies() -> dict[str, Any]:
     except ImportError as exc:
         raise RuntimeError(
             "TensorNEAT runtime dependencies are missing. "
-            "Install them first (see README TensorNEAT section)."
+            "Install them first: uv sync --extra tensorneat"
         ) from exc
 
     return {
-        "gym": gym,
         "jax": jax,
         "jnp": jnp,
+        "brax_envs": brax_envs,
+        "gym_wrapper": gym_wrapper,
         "tensorneat": {
             "NEAT": NEAT,
             "ACT": ACT,
@@ -259,54 +248,17 @@ def _import_runtime_dependencies() -> dict[str, Any]:
     }
 
 
-def _resolve_tasks(gym, task_names: Iterable[str]) -> list[str]:
-    resolved: list[str] = []
-    for task_name in task_names:
-        resolved.append(_resolve_single_task(gym, task_name))
-    return resolved
-
-
-def _resolve_single_task(gym, task_name: str) -> str:
-    candidates = [task_name]
-    if task_name.endswith("-v3"):
-        candidates.append(task_name.replace("-v3", "-v2"))
-    elif task_name.endswith("-v2"):
-        candidates.append(task_name.replace("-v2", "-v3"))
-
-    for candidate in candidates:
-        env = None
-        try:
-            env = gym.make("Meta-World/MT1", env_name=candidate, render_mode=None)
-            env.reset(seed=0)
-            return candidate
-        except Exception:
-            continue
-        finally:
-            if env is not None:
-                env.close()
-
-    tried = ", ".join(candidates)
-    raise ValueError(f"Could not resolve MetaWorld task '{task_name}'. Tried: {tried}")
-
-
-def _inspect_spaces(gym, task_name: str) -> tuple[int, int, np.ndarray, np.ndarray]:
-    env = gym.make("Meta-World/MT1", env_name=task_name, render_mode=None)
+def _inspect_spaces(brax_envs, gym_wrapper, env_name: str, backend: str) -> tuple[int, int, np.ndarray, np.ndarray]:
+    brax_env = brax_envs.get_environment(env_name, backend=backend)
+    gym_env = gym_wrapper.VectorGymWrapper(brax_env, batch_size=1, seed=0)
     try:
-        obs_shape = env.observation_space.shape
-        action_shape = env.action_space.shape
-        if len(obs_shape) != 1:
-            raise ValueError(f"Expected 1D observation shape, got {obs_shape}")
-        if len(action_shape) != 1:
-            raise ValueError(f"Expected 1D action shape, got {action_shape}")
-
-        return (
-            int(obs_shape[0]),
-            int(action_shape[0]),
-            np.asarray(env.action_space.low, dtype=np.float32),
-            np.asarray(env.action_space.high, dtype=np.float32),
-        )
+        obs_dim = gym_env.observation_space.shape[-1]
+        act_dim = gym_env.action_space.shape[-1]
+        action_low = np.asarray(gym_env.action_space.low, dtype=np.float32).flatten()
+        action_high = np.asarray(gym_env.action_space.high, dtype=np.float32).flatten()
+        return (int(obs_dim), int(act_dim), action_low, action_high)
     finally:
-        env.close()
+        gym_env.close()
 
 
 def _build_activation_functions(jnp, act_registry, activation_names: Iterable[str]) -> list[Any]:
@@ -331,40 +283,40 @@ def _build_activation_functions(jnp, act_registry, activation_names: Iterable[st
 
 
 def _evaluate_individual(
-    gym,
+    brax_envs,
+    gym_wrapper,
     jnp,
     forward_fn,
     state,
     transformed,
-    task_names: Iterable[str],
-    episodes_per_task: int,
+    env_names: list[str],
+    episodes_per_env: int,
     max_steps: int,
     base_seed: int,
     action_low: np.ndarray,
     action_high: np.ndarray,
     action_decoder: str,
-    success_bonus: float,
+    brax_backend: str,
     render: bool,
 ) -> float:
-    task_scores: list[float] = []
+    env_scores: list[float] = []
 
-    for task_idx, task_name in enumerate(task_names):
+    for env_idx, env_name in enumerate(env_names):
         episode_returns: list[float] = []
-        episode_success: list[float] = []
 
-        env = gym.make(
-            "Meta-World/MT1",
-            env_name=task_name,
-            render_mode="human" if render else None,
-            max_episode_steps=max_steps,
+        brax_env = brax_envs.get_environment(env_name, backend=brax_backend)
+        env = gym_wrapper.VectorGymWrapper(
+            brax_env,
+            batch_size=1,
+            seed=base_seed + env_idx * 10_000,
         )
 
         try:
-            for episode_idx in range(episodes_per_task):
-                episode_seed = base_seed + task_idx * 10_000 + episode_idx
-                obs, _ = env.reset(seed=episode_seed)
+            for episode_idx in range(episodes_per_env):
+                obs = env.reset()
+                if hasattr(obs, '__len__') and len(np.asarray(obs).shape) > 1:
+                    obs = np.asarray(obs).flatten()
                 total_reward = 0.0
-                success = 0.0
 
                 for _ in range(max_steps):
                     obs_arr = jnp.asarray(obs, dtype=jnp.float32)
@@ -375,22 +327,20 @@ def _evaluate_individual(
                         action_high=action_high,
                         mode=action_decoder,
                     )
-                    obs, reward, terminated, truncated, info = env.step(action)
-                    total_reward += float(reward)
-                    success = max(success, float(info.get("success", 0.0)))
-                    if terminated or truncated:
+                    action = action.reshape(1, -1)
+                    obs, reward, done, info = env.step(action)
+                    obs = np.asarray(obs).flatten()
+                    total_reward += float(np.sum(reward))
+                    if np.any(done):
                         break
 
                 episode_returns.append(total_reward)
-                episode_success.append(success)
         finally:
             env.close()
 
-        mean_return = float(np.mean(episode_returns))
-        mean_success = float(np.mean(episode_success))
-        task_scores.append(mean_return + success_bonus * mean_success)
+        env_scores.append(float(np.mean(episode_returns)))
 
-    return float(np.mean(task_scores))
+    return float(np.mean(env_scores))
 
 
 def _decode_action(raw_action, action_low: np.ndarray, action_high: np.ndarray, mode: str) -> np.ndarray:
@@ -409,7 +359,7 @@ def _persist_outputs(
     history: list[dict[str, float]],
     best_genome,
     best_fitness: float,
-    resolved_tasks: list[str],
+    env_names: list[str],
     observation_dim: int,
     action_dim: int,
 ) -> tuple[str, str]:
@@ -421,7 +371,7 @@ def _persist_outputs(
 
     payload = {
         "config": asdict(config),
-        "resolved_tasks": resolved_tasks,
+        "env_names": env_names,
         "observation_dim": observation_dim,
         "action_dim": action_dim,
         "best_fitness": best_fitness,

@@ -41,10 +41,10 @@ node_add_prob           = 0.2
 node_delete_prob        = 0.2
 
 num_hidden              = 0
-# Multi-environment input layout: [CartPole(4) | MountainCar(2)] = 6 total
-num_inputs              = 6
-# Multi-environment output layout: [CartPole(2) | MountainCar(3)] = 5 total
-num_outputs             = 5
+# Multi-environment input layout: [Hopper(11) | Walker2D(17)] = 28 total
+num_inputs              = 28
+# Multi-environment output layout: [Hopper(3) | Walker2D(6)] = 9 total
+num_outputs             = 9
 
 response_init_mean      = 1.0
 response_init_stdev     = 0.0
