@@ -27,9 +27,6 @@ tensorneat = [
     "jax>=0.4.28",
     "tensorneat @ git+https://github.com/EMI-Group/tensorneat.git",
 ]
-metal = [
-    "jax-metal>=0.1.0",
-]
 
 [build-system]
 requires = ["hatchling"]

@@ -2383,6 +2383,7 @@ name = "thesis"
 version = "0.1.0"
 source = { editable = "." }
 dependencies = [
+    { name = "brax" },
     { name = "cloudpickle" },
     { name = "farama-notifications" },
     { name = "gymnasium" },
@@ -2405,6 +2406,7 @@ tensorneat = [
 
 [package.metadata]
 requires-dist = [
+    { name = "brax", specifier = ">=0.12.0" },
     { name = "cloudpickle", specifier = "==3.1.2" },
     { name = "farama-notifications", specifier = "==0.0.4" },
     { name = "gymnasium", specifier = "==1.2.3" },

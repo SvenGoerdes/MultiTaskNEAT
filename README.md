@@ -29,37 +29,25 @@ Install optional dependencies:
 uv sync --extra tensorneat
 ```
 
-### macOS with Metal GPU (Apple Silicon)
-
-Install the JAX Metal plugin for GPU acceleration on Mac:
-
-```bash
-uv sync --extra tensorneat --extra metal
-```
-
-Run with the CPU profile (conservative defaults suitable for local development):
+### macOS / local development
 
 ```bash
 uv run python scripts/tensorneat_brax.py --profile cpu
 ```
 
-JAX will automatically detect and use the Metal GPU backend when `jax-metal` is installed. You can verify with:
+Uses the `positional` Brax backend with conservative defaults (pop=24, 8 generations).
 
-```bash
-uv run python -c "import jax; print(jax.devices())"
-```
+> **Note:** Brax's MJCF loader calls MJX internally, which does not support Apple Metal GPUs. The `positional` backend avoids this and runs on CPU. JAX Metal acceleration is not compatible with Brax at this time.
 
 Detailed setup notes: `docs/tensorneat-setup.md`
 
 ### CUDA GPU server
 
-Use larger defaults:
-
 ```bash
 uv run python scripts/tensorneat_brax.py --profile gpu
 ```
 
-With CUDA-enabled JAX, both TensorNEAT and Brax leverage full GPU acceleration.
+Uses the `mjx` backend for full GPU-accelerated physics (pop=96, 40 generations).
 
 ## Example custom run
 

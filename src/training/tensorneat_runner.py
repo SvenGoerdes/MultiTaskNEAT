@@ -35,7 +35,7 @@ class TensorNEATRunConfig:
     )
     activation_replace_rate: float = 0.15
     action_decoder: str = "clip"
-    brax_backend: str = "mjx"
+    brax_backend: str = "positional"
     output_dir: str = "output/tensorneat"
     verbose: bool = True
     render: bool = False
@@ -59,14 +59,16 @@ def run_tensorneat_brax(config: TensorNEATRunConfig) -> TensorNEATRunResult:
     jnp = modules["jnp"]
     tensorneat = modules["tensorneat"]
     brax_envs = modules["brax_envs"]
-    gym_wrapper = modules["gym_wrapper"]
 
     random.seed(config.seed)
     np.random.seed(config.seed)
 
-    obs_dim, act_dim, action_low, action_high = _inspect_spaces(
-        brax_envs, gym_wrapper, config.env_names[0], config.brax_backend
+    env_layouts, total_obs_dim, total_act_dim = _build_env_layout(
+        brax_envs, config.env_names, config.brax_backend
     )
+    # Brax continuous actions are typically in [-1, 1]
+    action_low = np.full(total_act_dim, -1.0, dtype=np.float32)
+    action_high = np.full(total_act_dim, 1.0, dtype=np.float32)
 
     activation_functions = _build_activation_functions(
         jnp=jnp,
@@ -80,8 +82,8 @@ def run_tensorneat_brax(config: TensorNEATRunConfig) -> TensorNEATRunResult:
         aggregation_options=tensorneat["AGG"].sum,
     )
     genome = tensorneat["DefaultGenome"](
-        num_inputs=obs_dim,
-        num_outputs=act_dim,
+        num_inputs=total_obs_dim,
+        num_outputs=total_act_dim,
         max_nodes=config.max_nodes,
         max_conns=config.max_conns,
         node_gene=node_gene,
@@ -116,12 +118,13 @@ def run_tensorneat_brax(config: TensorNEATRunConfig) -> TensorNEATRunResult:
             individual_seed = config.seed + generation * 100_000 + idx
             fitness = _evaluate_individual(
                 brax_envs=brax_envs,
-                gym_wrapper=gym_wrapper,
+                jax=jax,
                 jnp=jnp,
                 forward_fn=algorithm.forward,
                 state=state,
                 transformed=transformed,
-                env_names=list(config.env_names),
+                env_layouts=env_layouts,
+                total_obs_dim=total_obs_dim,
                 episodes_per_env=config.episodes_per_env,
                 max_steps=config.max_steps_per_episode,
                 base_seed=individual_seed,
@@ -129,7 +132,6 @@ def run_tensorneat_brax(config: TensorNEATRunConfig) -> TensorNEATRunResult:
                 action_high=action_high,
                 action_decoder=config.action_decoder,
                 brax_backend=config.brax_backend,
-                render=config.render,
             )
             fitnesses.append(fitness)
 
@@ -176,16 +178,16 @@ def run_tensorneat_brax(config: TensorNEATRunConfig) -> TensorNEATRunResult:
         best_genome=best_genome,
         best_fitness=best_fitness,
         env_names=list(config.env_names),
-        observation_dim=obs_dim,
-        action_dim=act_dim,
+        observation_dim=total_obs_dim,
+        action_dim=total_act_dim,
     )
 
     return TensorNEATRunResult(
         best_fitness=best_fitness,
         best_generation=best_generation,
         env_names=list(config.env_names),
-        observation_dim=obs_dim,
-        action_dim=act_dim,
+        observation_dim=total_obs_dim,
+        action_dim=total_act_dim,
         history=history,
         history_path=history_path,
         best_genome_path=best_path,
@@ -200,11 +202,13 @@ def brax_cpu_profile() -> TensorNEATRunConfig:
         episodes_per_env=1,
         max_steps_per_episode=500,
         env_names=("hopper", "walker2d"),
-        brax_backend="mjx",
+        brax_backend="positional",
     )
 
 
 def brax_gpu_profile() -> TensorNEATRunConfig:
+    """Profile for CUDA GPU servers. Uses mjx backend for full
+    GPU-accelerated physics."""
     return TensorNEATRunConfig(
         population_size=96,
         species_size=16,
@@ -221,7 +225,6 @@ def _import_runtime_dependencies() -> dict[str, Any]:
         import jax
         import jax.numpy as jnp
         from brax import envs as brax_envs
-        from brax.envs.wrappers import gym as gym_wrapper
         from tensorneat.algorithm.neat import NEAT
         from tensorneat.common import ACT, AGG, State
         from tensorneat.genome import DefaultGenome
@@ -236,7 +239,6 @@ def _import_runtime_dependencies() -> dict[str, Any]:
         "jax": jax,
         "jnp": jnp,
         "brax_envs": brax_envs,
-        "gym_wrapper": gym_wrapper,
         "tensorneat": {
             "NEAT": NEAT,
             "ACT": ACT,
@@ -248,17 +250,38 @@ def _import_runtime_dependencies() -> dict[str, Any]:
     }
 
 
-def _inspect_spaces(brax_envs, gym_wrapper, env_name: str, backend: str) -> tuple[int, int, np.ndarray, np.ndarray]:
-    brax_env = brax_envs.get_environment(env_name, backend=backend)
-    gym_env = gym_wrapper.VectorGymWrapper(brax_env, batch_size=1, seed=0)
-    try:
-        obs_dim = gym_env.observation_space.shape[-1]
-        act_dim = gym_env.action_space.shape[-1]
-        action_low = np.asarray(gym_env.action_space.low, dtype=np.float32).flatten()
-        action_high = np.asarray(gym_env.action_space.high, dtype=np.float32).flatten()
-        return (int(obs_dim), int(act_dim), action_low, action_high)
-    finally:
-        gym_env.close()
+@dataclass
+class _EnvLayout:
+    """Per-environment dimension info and offsets within the padded vector."""
+    name: str
+    obs_dim: int
+    act_dim: int
+    input_offset: int
+    output_offset: int
+
+
+def _build_env_layout(brax_envs, env_names: Iterable[str], backend: str) -> tuple[list[_EnvLayout], int, int]:
+    """Compute padded input/output layout across all environments.
+
+    Returns (layouts, total_input_dims, total_output_dims).
+    """
+    layouts: list[_EnvLayout] = []
+    input_offset = 0
+    output_offset = 0
+    for name in env_names:
+        env = brax_envs.get_environment(name, backend=backend)
+        obs_dim = int(env.observation_size)
+        act_dim = int(env.action_size)
+        layouts.append(_EnvLayout(
+            name=name,
+            obs_dim=obs_dim,
+            act_dim=act_dim,
+            input_offset=input_offset,
+            output_offset=output_offset,
+        ))
+        input_offset += obs_dim
+        output_offset += act_dim
+    return layouts, input_offset, output_offset
 
 
 def _build_activation_functions(jnp, act_registry, activation_names: Iterable[str]) -> list[Any]:
@@ -284,12 +307,13 @@ def _build_activation_functions(jnp, act_registry, activation_names: Iterable[st
 
 def _evaluate_individual(
     brax_envs,
-    gym_wrapper,
+    jax,
     jnp,
     forward_fn,
     state,
     transformed,
-    env_names: list[str],
+    env_layouts: list[_EnvLayout],
+    total_obs_dim: int,
     episodes_per_env: int,
     max_steps: int,
     base_seed: int,
@@ -297,46 +321,48 @@ def _evaluate_individual(
     action_high: np.ndarray,
     action_decoder: str,
     brax_backend: str,
-    render: bool,
 ) -> float:
     env_scores: list[float] = []
 
-    for env_idx, env_name in enumerate(env_names):
+    for env_idx, layout in enumerate(env_layouts):
         episode_returns: list[float] = []
 
-        brax_env = brax_envs.get_environment(env_name, backend=brax_backend)
-        env = gym_wrapper.VectorGymWrapper(
-            brax_env,
-            batch_size=1,
-            seed=base_seed + env_idx * 10_000,
-        )
+        env = brax_envs.get_environment(layout.name, backend=brax_backend)
+        jit_reset = jax.jit(env.reset)
+        jit_step = jax.jit(env.step)
 
-        try:
-            for episode_idx in range(episodes_per_env):
-                obs = env.reset()
-                if hasattr(obs, '__len__') and len(np.asarray(obs).shape) > 1:
-                    obs = np.asarray(obs).flatten()
-                total_reward = 0.0
+        for episode_idx in range(episodes_per_env):
+            episode_seed = base_seed + env_idx * 10_000 + episode_idx
+            rng = jax.random.PRNGKey(episode_seed)
+            brax_state = jit_reset(rng)
+            raw_obs = np.asarray(brax_state.obs, dtype=np.float32)
+            total_reward = 0.0
 
-                for _ in range(max_steps):
-                    obs_arr = jnp.asarray(obs, dtype=jnp.float32)
-                    raw_action = forward_fn(state, transformed, obs_arr)
-                    action = _decode_action(
-                        raw_action=raw_action,
-                        action_low=action_low,
-                        action_high=action_high,
-                        mode=action_decoder,
-                    )
-                    action = action.reshape(1, -1)
-                    obs, reward, done, info = env.step(action)
-                    obs = np.asarray(obs).flatten()
-                    total_reward += float(np.sum(reward))
-                    if np.any(done):
-                        break
+            for _ in range(max_steps):
+                # Pad observation into full input vector
+                padded_input = np.zeros(total_obs_dim, dtype=np.float32)
+                padded_input[layout.input_offset:layout.input_offset + layout.obs_dim] = raw_obs
 
-                episode_returns.append(total_reward)
-        finally:
-            env.close()
+                obs_arr = jnp.asarray(padded_input, dtype=jnp.float32)
+                raw_output = forward_fn(state, transformed, obs_arr)
+                raw_output = np.asarray(raw_output, dtype=np.float32)
+
+                # Slice this environment's action outputs
+                env_action = raw_output[layout.output_offset:layout.output_offset + layout.act_dim]
+                action = _decode_action(
+                    raw_action=env_action,
+                    action_low=action_low[layout.output_offset:layout.output_offset + layout.act_dim],
+                    action_high=action_high[layout.output_offset:layout.output_offset + layout.act_dim],
+                    mode=action_decoder,
+                )
+                action_jnp = jnp.asarray(action, dtype=jnp.float32)
+                brax_state = jit_step(brax_state, action_jnp)
+                raw_obs = np.asarray(brax_state.obs, dtype=np.float32)
+                total_reward += float(brax_state.reward)
+                if float(brax_state.done):
+                    break
+
+            episode_returns.append(total_reward)
 
         env_scores.append(float(np.mean(episode_returns)))
 

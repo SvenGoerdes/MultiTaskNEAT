@@ -16,7 +16,7 @@ def parse_args() -> argparse.Namespace:
         "--profile",
         choices=("cpu", "gpu", "custom"),
         default="cpu",
-        help="Hardware profile defaults. Use custom to fully control flags.",
+        help="Hardware profile: cpu (macOS/local), gpu (CUDA server), custom.",
     )
     parser.add_argument("--envs", nargs="+", default=None,
                         help="Brax environment names (e.g. hopper walker2d)")
@@ -32,7 +32,7 @@ def parse_args() -> argparse.Namespace:
         default=None,
     )
     parser.add_argument("--brax-backend", type=str, default=None,
-                        help="Brax physics backend (e.g. mjx, positional, spring)")
+                        help="Brax physics backend (e.g. positional, spring, generalized, mjx)")
     parser.add_argument("--output-dir", type=str, default=None)
     parser.add_argument("--quiet", action="store_true")
     parser.add_argument("--render", action="store_true")
